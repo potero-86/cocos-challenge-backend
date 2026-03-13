@@ -1,0 +1,27 @@
+{
+    "name": "cocos-challenge-backend",
+    "version": "0.0.1",
+    "description": "",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index",
+        "test": "jest --verbose --passWithNoTests --silent --detectOpenHandles",
+        "dev": "node --env-file=.env index"
+    },
+    "engines": {
+        "npm": ">=9.0.0",
+        "node": ">=20.0.0"
+    },
+    "author": "Otero Pablo",
+    "license": "ISC",
+    "dependencies": {
+        "cors": "^2.8.6",
+        "express": "^5.2.1",
+        "express-validator": "^7.3.1",
+        "sequelize": "6.37.8",
+        "pg": "8.20.0"
+    },
+    "devDependencies": {
+        "jest": "^30.3.0"
+    }
+}

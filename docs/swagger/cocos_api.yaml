@@ -1,0 +1,461 @@
+openapi: 3.0.0
+info:
+  title: Cocos API
+  version: 0.0.1
+  description: API REST para gestión de portafolio, instrumentos financieros y órdenes de compra/venta.
+
+servers:
+  - url: http://localhost:3000/cocos/v1
+    description: Local
+
+paths:
+  /instruments/search:
+    get:
+      summary: Buscar instrumentos
+      description: Busca instrumentos por nombre y/o ticker. Al menos uno de los dos es requerido.
+      parameters:
+        - in: query
+          name: name
+          required: false
+          schema:
+            type: string
+          description: Nombre parcial del instrumento (case-insensitive)
+        - in: query
+          name: ticker
+          required: false
+          schema:
+            type: string
+          description: Ticker parcial del instrumento (case-insensitive)
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Cantidad máxima de resultados
+      responses:
+        "200":
+          description: Lista de instrumentos encontrados
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Instrument"
+              example:
+                - ticker: "PAMP"
+                  name: "Pampa Energía"
+                  type: "ACCIONES"
+                - ticker: "ARS"
+                  name: "Pesos Argentinos"
+                  type: "MONEDA"
+        "400":
+          description: Error de validación
+          content:
+            application/json:
+              example:
+                status: 400
+                error: "params error"
+                message: "Se debe enviar al menos name o ticker"
+
+  /portfolio/{userId}:
+    get:
+      summary: Ver portfolio
+      description: >
+        Devuelve el cash disponible para operar, el listado de activos en posición
+        y el valor total de la cuenta del usuario.
+        El availableCash considera CASH_IN, CASH_OUT, BUY y SELL ejecutados (FILLED).
+        El totalAccountValue es el cash más el valor de mercado de todos los activos.
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: integer
+          description: ID del usuario
+      responses:
+        "200":
+          description: Portfolio del usuario
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Portfolio"
+              example:
+                assets:
+                  - ticker: "PAMP"
+                    name: "Pampa Energía"
+                    quantity: 50
+                    totalValue: 46500.00
+                    performance: "-2.50%"
+                    dailyPerformance: "-0.82%"
+                  - ticker: "COME"
+                    name: "Sociedad Comercial del Plata"
+                    quantity: 500
+                    totalValue: 125000.00
+                    performance: "1.20%"
+                    dailyPerformance: "-0.22%"
+                availableCash: 743600.00
+                totalAccountValue: 915100.00
+        "400":
+          description: Error de validación
+          content:
+            application/json:
+              example:
+                status: 400
+                error: "validation error"
+                message: "userId debe ser numérico"
+
+  /orders:
+    post:
+      summary: Crear orden
+      description: >
+        Crea una nueva orden de compra (BUY), venta (SELL), ingreso (CASH_IN) o retiro (CASH_OUT) de efectivo.
+
+        **Lógica de estados:**
+        - MARKET → se ejecuta al precio de cierre actual → status FILLED
+        - LIMIT  → queda en espera al precio indicado    → status NEW
+        - Sin fondos o acciones suficientes              → status REJECTED (la orden se guarda igual)
+
+        **Reglas:**
+        - Se debe enviar `size` o `amount`, no ambos vacíos.
+        - Si se envía `amount`, el size se calcula como `floor(amount / precio)`.
+        - Si `type = LIMIT`, el campo `price` es obligatorio y debe ser mayor a 0.
+        - CASH_IN y CASH_OUT no requieren `price` (siempre se ejecutan a 1).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderRequest"
+            examples:
+              buy_market_size:
+                summary: BUY MARKET con size → FILLED
+                value:
+                  userId: 1
+                  ticker: "PAMP"
+                  side: "BUY"
+                  type: "MARKET"
+                  size: 5
+              buy_market_amount:
+                summary: BUY MARKET con amount → FILLED
+                value:
+                  userId: 1
+                  ticker: "PAMP"
+                  side: "BUY"
+                  type: "MARKET"
+                  amount: 10000
+              sell_market:
+                summary: SELL MARKET → FILLED
+                value:
+                  userId: 1
+                  ticker: "PAMP"
+                  side: "SELL"
+                  type: "MARKET"
+                  size: 5
+              buy_limit:
+                summary: BUY LIMIT → NEW
+                value:
+                  userId: 1
+                  ticker: "PAMP"
+                  side: "BUY"
+                  type: "LIMIT"
+                  size: 5
+                  price: 900
+              sell_limit:
+                summary: SELL LIMIT → NEW
+                value:
+                  userId: 1
+                  ticker: "PAMP"
+                  side: "SELL"
+                  type: "LIMIT"
+                  size: 5
+                  price: 1100
+              cash_in:
+                summary: CASH_IN → FILLED
+                value:
+                  userId: 1
+                  ticker: "ARS"
+                  side: "CASH_IN"
+                  type: "MARKET"
+                  size: 50000
+              cash_out:
+                summary: CASH_OUT → FILLED
+                value:
+                  userId: 1
+                  ticker: "ARS"
+                  side: "CASH_OUT"
+                  type: "MARKET"
+                  size: 10000
+              rejected_no_funds:
+                summary: BUY sin fondos → REJECTED
+                value:
+                  userId: 1
+                  ticker: "PAMP"
+                  side: "BUY"
+                  type: "MARKET"
+                  size: 99999
+      responses:
+        "201":
+          description: Orden creada (puede ser FILLED, NEW o REJECTED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+              examples:
+                filled:
+                  summary: Orden ejecutada
+                  value:
+                    id: 42
+                    instrumentId: 3
+                    userId: 1
+                    size: 5
+                    price: "930.00"
+                    type: "MARKET"
+                    side: "BUY"
+                    status: "FILLED"
+                    datetime: "2025-01-01T12:00:00.000Z"
+                new:
+                  summary: Orden límite en espera
+                  value:
+                    id: 43
+                    instrumentId: 3
+                    userId: 1
+                    size: 5
+                    price: "900.00"
+                    type: "LIMIT"
+                    side: "BUY"
+                    status: "NEW"
+                    datetime: "2025-01-01T12:00:00.000Z"
+                rejected:
+                  summary: Orden rechazada por fondos insuficientes
+                  value:
+                    id: 44
+                    instrumentId: 3
+                    userId: 1
+                    size: 99999
+                    price: "930.00"
+                    type: "MARKET"
+                    side: "BUY"
+                    status: "REJECTED"
+                    datetime: "2025-01-01T12:00:00.000Z"
+        "400":
+          description: Error de validación o instrumento no encontrado
+          content:
+            application/json:
+              examples:
+                instrument_not_found:
+                  summary: Ticker inexistente
+                  value:
+                    status: 400
+                    error: "instrument_not_found"
+                    message: "El ticker XXXX no existe en nuestra plataforma."
+                no_size_or_amount:
+                  summary: Falta size y amount
+                  value:
+                    status: 400
+                    error: "validation error"
+                    message: "Se debe enviar size o amount"
+                limit_without_price:
+                  summary: LIMIT sin price
+                  value:
+                    status: 400
+                    error: "validation error"
+                    message: "Precio obligatorio y mayor a 0 para órdenes LIMIT"
+                no_market_data:
+                  summary: Sin datos de mercado
+                  value:
+                    status: 400
+                    error: "no_market_data"
+                    message: "No hay precios disponibles para este activo actualmente."
+
+  /orders/{id}/cancel:
+    post:
+      summary: Cancelar orden
+      description: >
+        Cancela una orden existente.
+        Solo se pueden cancelar órdenes en estado NEW.
+        Las órdenes FILLED, REJECTED o CANCELLED no son cancelables.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+          description: ID de la orden a cancelar
+      responses:
+        "200":
+          description: Orden cancelada correctamente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelResponse"
+              example:
+                id: 42
+                status: "CANCELLED"
+        "400":
+          description: La orden no está en estado NEW
+          content:
+            application/json:
+              example:
+                status: 400
+                error: "order_not_cancellable"
+                message: "Solo se pueden cancelar órdenes en estado NEW. Estado actual: FILLED."
+        "404":
+          description: La orden no existe
+          content:
+            application/json:
+              example:
+                status: 404
+                error: "order_not_found"
+                message: "La orden 999 no existe."
+
+components:
+  schemas:
+
+    Instrument:
+      type: object
+      properties:
+        ticker:
+          type: string
+          example: "PAMP"
+        name:
+          type: string
+          example: "Pampa Energía"
+        type:
+          type: string
+          enum: [ACCIONES, MONEDA]
+          example: "ACCIONES"
+
+    Asset:
+      type: object
+      properties:
+        ticker:
+          type: string
+          example: "PAMP"
+        name:
+          type: string
+          example: "Pampa Energía"
+        quantity:
+          type: number
+          example: 50
+        totalValue:
+          type: number
+          example: 46500.00
+          description: quantity * precio de cierre actual
+        performance:
+          type: string
+          example: "-2.50%"
+          description: Rendimiento contra el precio promedio ponderado de compra
+        dailyPerformance:
+          type: string
+          example: "-0.50%"
+          description: Rendimiento diario
+
+    Portfolio:
+      type: object
+      properties:
+        assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Asset"
+        availableCash:
+          type: number
+          example: 743600.00
+          description: Pesos disponibles para operar (considera BUY/SELL además de CASH_IN/CASH_OUT)
+        totalAccountValue:
+          type: number
+          example: 915100.00
+          description: availableCash + valor de mercado de todos los activos
+
+    OrderRequest:
+      type: object
+      required:
+        - userId
+        - ticker
+        - side
+        - type
+      properties:
+        userId:
+          type: integer
+          example: 1
+        ticker:
+          type: string
+          example: "PAMP"
+        side:
+          type: string
+          enum: [BUY, SELL, CASH_IN, CASH_OUT]
+          example: "BUY"
+        type:
+          type: string
+          enum: [MARKET, LIMIT]
+          example: "MARKET"
+        size:
+          type: integer
+          example: 5
+          description: Cantidad de acciones. Requerido si no se envía amount.
+        amount:
+          type: number
+          example: 10000
+          description: Monto en pesos. El size se calcula como floor(amount / precio). Requerido si no se envía size.
+        price:
+          type: number
+          example: 900
+          description: Precio límite. Obligatorio y mayor a 0 si type = LIMIT.
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 42
+        instrumentId:
+          type: integer
+          example: 3
+        userId:
+          type: integer
+          example: 1
+        size:
+          type: integer
+          example: 5
+        price:
+          type: string
+          example: "930.00"
+        type:
+          type: string
+          enum: [MARKET, LIMIT]
+        side:
+          type: string
+          enum: [BUY, SELL, CASH_IN, CASH_OUT]
+        status:
+          type: string
+          enum: [FILLED, NEW, REJECTED, CANCELLED]
+        datetime:
+          type: string
+          format: date-time
+          example: "2025-01-01T12:00:00.000Z"
+
+    CancelResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 42
+        status:
+          type: string
+          enum: [CANCELLED]
+          example: "CANCELLED"
+
+    ErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+          example: 400
+        error:
+          type: string
+          example: "validation error"
+        message:
+          type: string
+          example: "Descripción del error"
